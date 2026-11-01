@@ -17,6 +17,8 @@ export type Profile = {
   id: string;
   role: UserRole;
   display_name: string | null;
+  email: string | null;
+  is_approved: boolean;
   created_at: string;
 };
 
@@ -48,7 +50,7 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
   try {
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, role, display_name, created_at")
+      .select("id, role, display_name, email, is_approved, created_at")
       .eq("id", userId)
       .single();
     if (error || !data) return null;
@@ -149,8 +151,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Fail-closed defaults: until the profile resolves (or if it is missing)
   // the session is treated as the least-privileged 'viewer' role.
   const role: UserRole = profile?.role ?? "viewer";
-  const canManage = role === "admin" || role === "technician";
-  const canDelete = role === "admin";
+  const approved = profile
+    ? profile.is_approved || profile.role === "admin"
+    : false;
+  const canManage =
+    approved && (role === "admin" || role === "technician");
+  const canDelete = approved && role === "admin";
 
   return (
     <AuthContext.Provider

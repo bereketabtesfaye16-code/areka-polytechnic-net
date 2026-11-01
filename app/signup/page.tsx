@@ -46,7 +46,7 @@ export default function SignupPage() {
     // If no session is returned, email confirmation is enabled.
     if (data.session) {
       router.refresh();
-      router.push("/");
+      router.push("/pending-approval");
     } else {
       setNeedsConfirmation(true);
     }
@@ -64,7 +64,8 @@ export default function SignupPage() {
             <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
               We sent a confirmation link to{" "}
               <span className="font-medium">{email}</span>. Click it to activate
-              your account, then sign in.
+              your account, then sign in. An administrator must still approve
+              access before any network data is visible.
             </p>
           </div>
           <Link
@@ -137,11 +138,11 @@ export default function SignupPage() {
               <input
                 type="password"
                 required
-                minLength={6}
+                minLength={8}
                 autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 6 characters"
+                placeholder="At least 8 characters"
                 className={inputClass}
               />
             </label>
@@ -151,7 +152,7 @@ export default function SignupPage() {
               <input
                 type="password"
                 required
-                minLength={6}
+                minLength={8}
                 autoComplete="new-password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}

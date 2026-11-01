@@ -3,18 +3,6 @@
 import type { ReactNode } from "react";
 import { useAuth, type UserRole } from "@/app/contexts/AuthContext";
 
-/** Lower = fewer privileges. Used by hasMinRole(). */
-export const ROLE_ORDER: Record<UserRole, number> = {
-  viewer: 0,
-  technician: 1,
-  admin: 2,
-};
-
-/** True when `role` has at least the rank of `minimum`. */
-export function hasMinRole(role: UserRole, minimum: UserRole): boolean {
-  return ROLE_ORDER[role] >= ROLE_ORDER[minimum];
-}
-
 /**
  * Renders `children` only when the current user's role is in `allowedRoles`.
  * Otherwise renders `fallback` (defaults to nothing).

@@ -20,9 +20,31 @@ create table if not exists public.audit_logs (
   record_id  uuid not null,
   action     text not null check (action in ('INSERT', 'UPDATE', 'DELETE')),
   changes    jsonb not null default '{}'::jsonb,
-  actor_id   uuid references auth.users(id) on delete set null,
+  -- Snapshot of the actor's display name so the trail stays readable even
+  -- after the account is deleted (the FK below nulls actor_id on delete).
+  actor_name text,
+  actor_id   uuid,
   created_at timestamptz not null default now()
 );
+
+alter table public.audit_logs add column if not exists actor_name text;
+
+-- The original schema pointed actor_id at auth.users, which PostgREST cannot
+-- embed. Point it at public.profiles instead so `profiles!...` joins work,
+-- while still nulling the actor when the account is removed.
+alter table public.audit_logs drop constraint if exists audit_logs_actor_id_fkey;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'audit_logs_actor_id_profiles_fkey'
+      and conrelid = 'public.audit_logs'::regclass
+  ) then
+    alter table public.audit_logs
+      add constraint audit_logs_actor_id_profiles_fkey
+      foreign key (actor_id) references public.profiles(id) on delete set null;
+  end if;
+end $$;
 
 alter table public.audit_logs enable row level security;
 
@@ -50,6 +72,7 @@ declare
   v_action text;
   v_changes jsonb;
   v_record_id uuid;
+  v_actor_name text;
 begin
   if tg_op = 'INSERT' then
     v_action    := 'INSERT';
@@ -65,8 +88,14 @@ begin
     v_record_id := old.id;
   end if;
 
-  insert into public.audit_logs (table_name, record_id, action, changes, actor_id)
-  values (tg_table_name, v_record_id, v_action, v_changes, auth.uid());
+  select display_name into v_actor_name
+  from public.profiles
+  where id = auth.uid();
+
+  insert into public.audit_logs
+    (table_name, record_id, action, changes, actor_id, actor_name)
+  values
+    (tg_table_name, v_record_id, v_action, v_changes, auth.uid(), v_actor_name);
 
   return coalesce(new, old);
 end;
@@ -152,35 +181,70 @@ end $$;
 -- IMPORTANT: the two unique indexes above are enforced PER ENDPOINT COLUMN,
 -- which leaves a hole — a port could be used as endpoint_a in one cable and
 -- as endpoint_b in another, and "mirrored" cables (A→B plus B→A) would both
--- insert. This trigger closes that gap by rejecting any active/planned cable
--- that reuses a port which already appears in a different cable (either side).
--- Kept alongside the indexes as defense-in-depth for lifted legacy datasets.
-create or replace function public.cable_port_exclusive()
+-- insert. A single-row trigger that merely runs EXISTS() is NOT concurrency
+-- safe (two simultaneous transactions both pass the check).
+--
+-- The usage table below is the real invariant: one row per port, enforced by
+-- the PRIMARY KEY, so the database itself serializes conflicting writers.
+create table if not exists public.cable_port_usage (
+  port_id  uuid primary key references public.ports(id) on delete cascade,
+  cable_id uuid not null references public.cables(id) on delete cascade
+);
+
+create index if not exists idx_cable_port_usage_cable
+  on public.cable_port_usage (cable_id);
+
+alter table public.cable_port_usage enable row level security;
+revoke all on public.cable_port_usage from anon, authenticated;
+
+create or replace function public.sync_cable_port_usage()
 returns trigger
 language plpgsql
+security definer
 set search_path = ''
 as $$
 begin
-  if exists (
-    select 1
-    from public.cables
-    where status <> 'decommissioned'
-      and id <> new.id
-      and (
-        new.endpoint_a_port_id in (endpoint_a_port_id, endpoint_b_port_id)
-        or new.endpoint_b_port_id in (endpoint_a_port_id, endpoint_b_port_id)
-      )
-  ) then
-    raise exception 'Each port can only be used by one active or planned cable.';
+  if tg_op = 'DELETE' then
+    delete from public.cable_port_usage where cable_id = old.id;
+    return old;
   end if;
+
+  -- Remove this cable's previous reservations, then re-reserve the ports
+  -- only while the cable is active/planned. The PK on port_id makes a
+  -- concurrent conflict fail instead of silently double-booking.
+  delete from public.cable_port_usage where cable_id = new.id;
+
+  if new.status <> 'decommissioned' then
+    insert into public.cable_port_usage (port_id, cable_id)
+    values
+      (new.endpoint_a_port_id, new.id),
+      (new.endpoint_b_port_id, new.id);
+  end if;
+
   return new;
 end;
 $$;
 
 drop trigger if exists trg_cables_port_exclusive on public.cables;
-create trigger trg_cables_port_exclusive
-  before insert or update on public.cables
-  for each row execute function public.cable_port_exclusive();
+drop function if exists public.cable_port_exclusive();
+drop trigger if exists trg_cables_port_usage on public.cables;
+create trigger trg_cables_port_usage
+  after insert or update or delete on public.cables
+  for each row execute function public.sync_cable_port_usage();
+
+-- Backfill reservations for existing cables. If legacy data already contains
+-- duplicates we keep the earliest cable and let the app reconcile the rest.
+insert into public.cable_port_usage (port_id, cable_id)
+select port_id, min(cable_id)
+from (
+  select endpoint_a_port_id as port_id, id as cable_id
+  from public.cables where status <> 'decommissioned'
+  union all
+  select endpoint_b_port_id as port_id, id as cable_id
+  from public.cables where status <> 'decommissioned'
+) used
+group by port_id
+on conflict (port_id) do nothing;
 
 -- ============================================================
 -- CLOSE THE v_asset_summary RLS BYPASS
@@ -192,6 +256,48 @@ alter view public.v_asset_summary set (security_invoker = on);
 
 revoke all on public.v_asset_summary from anon;
 grant select on public.v_asset_summary to authenticated;
+
+-- ============================================================
+-- ASSET TAG UNIQUENESS
+-- Two devices must not share an asset tag. Empty tags are allowed (the app
+-- generates one when blank). Legacy duplicates are reported, not fatal.
+-- ============================================================
+do $$
+begin
+  create unique index if not exists uq_assets_asset_tag
+    on public.assets (asset_tag)
+    where asset_tag <> '';
+exception
+  when unique_violation then
+    raise notice 'Skipped asset_tag uniqueness index: duplicate tags exist. Reconcile and re-run.';
+end $$;
+
+-- ============================================================
+-- REALTIME PUBLICATION
+-- Let every client refresh its lists when data changes (multi-user views
+-- otherwise stay stale until reload). profiles is added in schema-rbac.sql.
+-- ============================================================
+do $$
+declare
+  t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['assets', 'ports', 'cables', 'maintenance_logs'] loop
+      if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'public' and tablename = t
+      ) then
+        execute format(
+          'alter publication supabase_realtime add table public.%I', t
+        );
+      end if;
+    end loop;
+  end if;
+exception
+  when others then
+    null;
+end $$;
 
 -- ============================================================
 -- GRANTS

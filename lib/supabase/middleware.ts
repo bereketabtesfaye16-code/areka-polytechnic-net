@@ -40,6 +40,8 @@ export async function updateSession(request: NextRequest) {
   // Auth landing pages: signed-in users have no business there.
   const isAuthLanding =
     url.pathname === "/login" || url.pathname === "/signup";
+  // Waiting room for accounts an admin has not approved yet.
+  const isPendingPath = url.pathname === "/pending-approval";
 
   if (!user && !isPublicPath) {
     url.pathname = "/login";
@@ -52,17 +54,32 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Admin-only routes: verify the caller's profile role server-side as a
-  // second layer on top of the client-side <ProtectRole> guards. RLS still
-  // blocks any direct data mutation for non-admins.
-  if (user && url.pathname.startsWith("/admin")) {
+  if (user && !isPublicPath) {
+    // One profile lookup drives both the approval gate and the /admin role
+    // guard. A missing profile is treated as unapproved (fail closed).
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role")
+      .select("role, is_approved")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (!profile || profile.role !== "admin") {
+    const role = profile?.role ?? "viewer";
+    const approved = profile?.is_approved === true || role === "admin";
+
+    if (!approved && !isPendingPath) {
+      url.pathname = "/pending-approval";
+      return NextResponse.redirect(url);
+    }
+
+    if (approved && isPendingPath) {
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
+
+    // Admin-only routes: verify the caller's profile role server-side as a
+    // second layer on top of the client-side <ProtectRole> guards. RLS still
+    // blocks any direct data mutation for non-admins.
+    if (url.pathname.startsWith("/admin") && role !== "admin") {
       url.pathname = "/";
       return NextResponse.redirect(url);
     }

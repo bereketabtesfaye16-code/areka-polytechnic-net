@@ -10,6 +10,7 @@ import {
 } from "@/lib/queries";
 import ProtectRole, { ReadOnlyNotice } from "@/app/components/ProtectRole";
 import ErrorBanner from "@/app/components/ErrorBanner";
+import Pagination from "@/app/components/Pagination";
 import { inputClass } from "@/lib/ui";
 import { formatDateTime } from "@/lib/utils";
 
@@ -102,6 +103,7 @@ export default function AuditAdminPage() {
   const [tableFilter, setTableFilter] = useState<AuditTableName | "all">("all");
   const [actionFilter, setActionFilter] = useState<AuditLogAction | "all">("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [auditPage, setAuditPage] = useState(1);
 
   useEffect(() => {
     fetchAuditLogs().then((res) => {
@@ -119,6 +121,17 @@ export default function AuditAdminPage() {
           (actionFilter === "all" || log.action === actionFilter)
       ),
     [logs, tableFilter, actionFilter]
+  );
+
+  const AUDIT_PER_PAGE = 25;
+  const auditPageCount = Math.max(
+    1,
+    Math.ceil(filtered.length / AUDIT_PER_PAGE)
+  );
+  const safeAuditPage = Math.min(auditPage, auditPageCount);
+  const pagedAudit = filtered.slice(
+    (safeAuditPage - 1) * AUDIT_PER_PAGE,
+    safeAuditPage * AUDIT_PER_PAGE
   );
 
   function toggleExpand(id: string) {
@@ -177,9 +190,10 @@ export default function AuditAdminPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={tableFilter}
-                    onChange={(e) =>
-                      setTableFilter(e.target.value as AuditTableName | "all")
-                    }
+                    onChange={(e) => {
+                      setTableFilter(e.target.value as AuditTableName | "all");
+                      setAuditPage(1);
+                    }}
                     aria-label="Filter by table"
                     className={inputClass}
                   >
@@ -191,9 +205,10 @@ export default function AuditAdminPage() {
                   </select>
                   <select
                     value={actionFilter}
-                    onChange={(e) =>
-                      setActionFilter(e.target.value as AuditLogAction | "all")
-                    }
+                    onChange={(e) => {
+                      setActionFilter(e.target.value as AuditLogAction | "all");
+                      setAuditPage(1);
+                    }}
                     aria-label="Filter by action"
                     className={inputClass}
                   >
@@ -230,7 +245,7 @@ export default function AuditAdminPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                    {filtered.map((log) => {
+                    {pagedAudit.map((log) => {
                       const open = expanded.has(log.id);
                       return (
                         <Fragment key={log.id}>
@@ -251,7 +266,9 @@ export default function AuditAdminPage() {
                               </span>
                             </td>
                             <td className="hidden px-4 py-3 text-zinc-600 md:table-cell md:px-6 dark:text-zinc-400">
-                              {log.actor_profiles?.display_name ?? "System"}
+                              {log.actor_name ??
+                                log.actor_profiles?.display_name ??
+                                "System"}
                             </td>
                             <td className="hidden px-4 py-3 font-mono text-xs text-zinc-500 lg:table-cell lg:px-6">
                               {log.record_id.slice(0, 8)}…
@@ -286,6 +303,12 @@ export default function AuditAdminPage() {
                 </table>
               </div>
             )}
+            <Pagination
+              page={safeAuditPage}
+              pageCount={auditPageCount}
+              total={filtered.length}
+              onPageChange={setAuditPage}
+            />
           </section>
         </main>
       </ProtectRole>

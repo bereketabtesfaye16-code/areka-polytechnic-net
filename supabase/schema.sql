@@ -142,6 +142,82 @@ alter table public.maintenance_logs
   add column if not exists created_at timestamptz not null default now();
 
 -- ============================================================
+-- CONSTRAINT RECONCILIATION
+-- Tables created by an older layout gained bare columns above. Add the
+-- missing FK/CHECK constraints with NOT VALID: they are enforced for every
+-- new write immediately, but the migration does not fail on legacy rows.
+-- Validate later with `alter table ... validate constraint ...`.
+-- ============================================================
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'ports_asset_id_fkey' and conrelid = 'public.ports'::regclass) then
+    alter table public.ports add constraint ports_asset_id_fkey
+      foreign key (asset_id) references public.assets(id) on delete cascade not valid;
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'cables_endpoint_a_port_id_fkey' and conrelid = 'public.cables'::regclass) then
+    alter table public.cables add constraint cables_endpoint_a_port_id_fkey
+      foreign key (endpoint_a_port_id) references public.ports(id) on delete cascade not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'cables_endpoint_b_port_id_fkey' and conrelid = 'public.cables'::regclass) then
+    alter table public.cables add constraint cables_endpoint_b_port_id_fkey
+      foreign key (endpoint_b_port_id) references public.ports(id) on delete cascade not valid;
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'maintenance_logs_asset_id_fkey' and conrelid = 'public.maintenance_logs'::regclass) then
+    alter table public.maintenance_logs add constraint maintenance_logs_asset_id_fkey
+      foreign key (asset_id) references public.assets(id) on delete cascade not valid;
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'assets_type_check' and conrelid = 'public.assets'::regclass) then
+    alter table public.assets add constraint assets_type_check
+      check (type in ('switch', 'router', 'patch_panel')) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'assets_status_check' and conrelid = 'public.assets'::regclass) then
+    alter table public.assets add constraint assets_status_check
+      check (status in ('active', 'maintenance', 'offline', 'decommissioned')) not valid;
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'ports_port_type_check' and conrelid = 'public.ports'::regclass) then
+    alter table public.ports add constraint ports_port_type_check
+      check (port_type in ('RJ45', 'SFP', 'SFP+', 'Fiber')) not valid;
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'cables_cable_type_check' and conrelid = 'public.cables'::regclass) then
+    alter table public.cables add constraint cables_cable_type_check
+      check (cable_type in ('Cat5e', 'Cat6', 'Cat6a', 'Cat7', 'Fiber SM', 'Fiber MM')) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'cables_status_check' and conrelid = 'public.cables'::regclass) then
+    alter table public.cables add constraint cables_status_check
+      check (status in ('active', 'planned', 'decommissioned')) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'cables_check' and conrelid = 'public.cables'::regclass) then
+    alter table public.cables add constraint cables_check
+      check (endpoint_a_port_id <> endpoint_b_port_id) not valid;
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'maintenance_logs_maintenance_type_check' and conrelid = 'public.maintenance_logs'::regclass) then
+    alter table public.maintenance_logs add constraint maintenance_logs_maintenance_type_check
+      check (maintenance_type in ('preventive', 'corrective', 'inspection')) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'maintenance_logs_outcome_check' and conrelid = 'public.maintenance_logs'::regclass) then
+    alter table public.maintenance_logs add constraint maintenance_logs_outcome_check
+      check (outcome in ('pending', 'completed', 'failed')) not valid;
+  end if;
+end $$;
+
+-- ============================================================
 -- AUTO GENERATE PORTS TRIGGER
 -- ============================================================
 create or replace function public.generate_default_ports()

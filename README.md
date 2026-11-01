@@ -23,7 +23,7 @@ patch cables, and maintenance work at Butajira Polytechnic College. Built with
    npm install
    ```
 
-2. Create `.env.local` from the template:
+2. Create `.env.local` from the template (`.env.example`):
 
    ```env
    NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
@@ -33,10 +33,14 @@ patch cables, and maintenance work at Butajira Polytechnic College. Built with
 3. Run the app:
 
    ```bash
-   npm run dev      # development
-   npm run build    # production build (also validates the proxy middleware)
-   npm run lint     # eslint
+   npm run dev        # development
+   npm run build      # production build (also validates the proxy middleware)
+   npm run lint       # eslint
+   npm run typecheck  # tsc --noEmit
    ```
+
+   CI runs lint, typecheck, and build on every push and pull request
+   (`.github/workflows/ci.yml`).
 
 ## Database Setup
 
@@ -46,8 +50,8 @@ Apply the SQL files **in order** from the Supabase SQL Editor (or `supabase db p
 | ----- | --------------- | -------------------------------------------------------------- |
 | 1     | `reset.sql`     | Optional — wipes all data for a clean slate                    |
 | 2     | `schema.sql`    | Core tables (`assets`, `ports`, `cables`, `maintenance_logs`), auto-port trigger, full-text search-friendly design. Enables RLS (deny-by-default) |
-| 3     | `schema-rbac.sql` | `profiles` table, Auth signup trigger, role-based RLS policies, grants, Realtime |
-| 4     | `schema-audit.sql` | Audit logging (`audit_logs` + triggers), optimization indexes, port-exclusivity invariant, `v_asset_summary` RLS hardening |
+| 3     | `schema-rbac.sql` | `profiles` table (email + approval flag), Auth signup trigger, approval-aware RLS policies, last-admin guard, grants, Realtime |
+| 4     | `schema-audit.sql` | Audit logging (`audit_logs` + triggers, actor snapshot), optimization indexes, concurrency-safe port exclusivity (`cable_port_usage`), `v_asset_summary` RLS hardening, Realtime publication |
 
 `schema-rbac.sql` is idempotent and can also be re-run on an existing install to
 upgrade from the legacy open (anon) policies. A **backfill** statement is included
@@ -57,23 +61,29 @@ for users who signed up before this migration was applied.
 record an immutable audit trail of every mutation and add the search/join
 indexes. It closes an RLS gap: `v_asset_summary` is switched to
 `security invoker` so it can never bypass RLS, and `anon` loses SELECT on it.
+It also replaces the old racy port-exclusivity trigger with the
+`cable_port_usage` table, which enforces one cable per port at the database
+level even under concurrent writes.
 
-### Promoting your first admin
+### Approvals & promoting your first admin
 
-Every new sign-up is automatically assigned the lowest-privilege `viewer` role by a
-database trigger. **The role is never read from client-supplied metadata**, so a user
-cannot self-promote. To bootstrap an admin:
+Every new sign-up is automatically assigned the lowest-privilege `viewer` role
+**and `is_approved = false`** by a database trigger. **The role is never read
+from client-supplied metadata**, so a user cannot self-promote. Unapproved
+accounts are routed to `/pending-approval` and cannot read any inventory data
+until an admin approves them. To bootstrap an admin:
 
 ```sql
 -- 1. Find the user (or use the new /admin/users page once you have an admin)
 select id, email from auth.users;
 
--- 2. Promote to admin / technician
+-- 2. Promote to admin (admins are always treated as approved)
 update public.profiles set role = 'admin' where id = '<user-uuid>';
 ```
 
-After your first admin exists, subsequent role changes are done in-app under
-**Users** (admin-only) and take effect live via Supabase Realtime.
+After your first admin exists, role and approval changes are done in-app under
+**Users** (admin-only) and take effect live via Supabase Realtime. The
+`protect_last_admin` trigger prevents deleting or demoting the final admin.
 
 ## Role Model & Security
 
@@ -83,14 +93,17 @@ After your first admin exists, subsequent role changes are done in-app under
 | **technician** | Read / Create / Update (no delete) | Read / Create / Update (no delete) | Read / Create / Update (no delete) | read own |
 | **viewer** | Read-only | Read-only | Read-only | read own |
 
-Enforcement is layered (defense in depth), never UI-only:
+Access also requires `is_approved` (admins bypass the flag). Enforcement is
+layered (defense in depth), never UI-only:
 
-1. **RLS (source of truth)** — every table query is filtered by `user_role()`.
-   DELETE is admin-only via policy; INSERT/UPDATE require admin or technician;
-   profiles updates require admin. This holds even if someone bypasses the UI.
+1. **RLS (source of truth)** — every table query is filtered by
+   `is_approved()`; DELETE is admin-only via policy; INSERT/UPDATE require admin
+   or technician; profiles updates require admin. This holds even if someone
+   bypasses the UI.
 2. **Proxy middleware** (`proxy.ts`, Next 16's renamed middleware) — refreshes the
-   Supabase session on every request, redirects unauthenticated users to `/login`,
-   and server-side redirects non-admins away from `/admin/*`.
+   Supabase session on every request, redirects unauthenticated users to
+   `/login`, sends unapproved users to `/pending-approval`, and server-side
+   redirects non-admins away from `/admin/*`.
 3. **Client guards** — `<ProtectRole allowedRoles={['admin', 'technician']}>
    ...</ProtectRole>` wraps every mutation form; delete buttons render only for
    admins; viewers see a "Read-only access" notice instead of edit/create forms.

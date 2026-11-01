@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { supabase } from "@/lib/supabase";
 import { toUserMessage } from "@/lib/errors";
+import { todayLocal } from "@/lib/utils";
 import type { UserRole } from "@/app/contexts/AuthContext";
 import {
   CABLE_STATUSES,
@@ -16,6 +17,8 @@ export type UserProfile = {
   id: string;
   role: UserRole;
   display_name: string | null;
+  email: string | null;
+  is_approved: boolean;
   created_at: string;
 };
 
@@ -110,11 +113,20 @@ export type AuditLog = {
     new?: Record<string, unknown>;
   };
   actor_id: string | null;
+  actor_name: string | null;
   created_at: string;
   actor_profiles?: { display_name: string | null } | null;
 };
 
 export type QueryResult<T> = { data: T[] | null; error: string | null };
+
+/**
+ * Safety caps so a large deployment cannot accidentally download an entire
+ * table into the browser. Pages paginate what they receive client-side; a
+ * future server-side pagination layer can raise these per request.
+ */
+const LIST_LIMIT = 500;
+const PORT_LIST_LIMIT = 2000;
 
 /**
  * Wraps a Supabase select query so thrown exceptions (network, edge runtime
@@ -216,12 +228,16 @@ export async function deleteAsset(id: string): Promise<string | null> {
 
 export async function fetchAssets(): Promise<QueryResult<Asset>> {
   return fetchRows<Asset>(
-    supabase.from("assets").select("*").order("created_at", { ascending: false })
+    supabase
+      .from("assets")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(LIST_LIMIT)
   );
 }
 
 const defaultTag = () =>
-  `BPC-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(
+  `BPC-${todayLocal().replace(/-/g, "")}-${Math.floor(
     Math.random() * 9000 + 1000
   )}`;
 
@@ -246,7 +262,11 @@ export async function insertAsset(
 
 export async function fetchPorts(): Promise<QueryResult<PortJoined>> {
   return fetchRows<PortJoined>(
-    supabase.from("ports").select("*, assets(id, name, type)").order("created_at", { ascending: false })
+    supabase
+      .from("ports")
+      .select("*, assets(id, name, type)")
+      .order("created_at", { ascending: false })
+      .limit(PORT_LIST_LIMIT)
   );
 }
 
@@ -275,6 +295,7 @@ export async function fetchCables(): Promise<QueryResult<CableJoined>> {
         "*, endpoint_a:ports!cables_endpoint_a_port_id_fkey(id, port_number, port_type, asset_id, assets(id, name, type)), endpoint_b:ports!cables_endpoint_b_port_id_fkey(id, port_number, port_type, asset_id, assets(id, name, type))"
       )
       .order("created_at", { ascending: false })
+      .limit(LIST_LIMIT)
   );
 }
 
@@ -314,6 +335,7 @@ export async function fetchMaintenanceLogs(): Promise<QueryResult<MaintenanceJoi
       .select("*, assets(id, name, type)")
       .order("log_date", { ascending: false })
       .order("created_at", { ascending: false })
+      .limit(LIST_LIMIT)
   );
 }
 
@@ -363,8 +385,9 @@ export async function fetchProfiles(): Promise<QueryResult<UserProfile>> {
   return fetchRows<UserProfile>(
     supabase
       .from("profiles")
-      .select("id, role, display_name, created_at")
+      .select("id, role, display_name, email, is_approved, created_at")
       .order("created_at", { ascending: false })
+      .limit(LIST_LIMIT)
   );
 }
 
@@ -378,7 +401,22 @@ export async function updateUserRole(
   return mutate(supabase.from("profiles").update({ role }).eq("id", id));
 }
 
-export async function fetchStats(): Promise<Stats> {
+export async function updateUserApproval(
+  id: string,
+  is_approved: boolean
+): Promise<string | null> {
+  const parsed = z.boolean().safeParse(is_approved);
+  if (!parsed.success) return zodMessage(parsed.error);
+
+  return mutate(
+    supabase.from("profiles").update({ is_approved }).eq("id", id)
+  );
+}
+
+export async function fetchStats(): Promise<{
+  data: Stats | null;
+  error: string | null;
+}> {
   try {
     const [assets, activeAssets, ports, activeCables, maintenanceLogs] =
       await Promise.all([
@@ -397,15 +435,29 @@ export async function fetchStats(): Promise<Stats> {
           .select("id", { count: "exact", head: true }),
       ]);
 
+    const firstError =
+      assets.error ??
+      activeAssets.error ??
+      ports.error ??
+      activeCables.error ??
+      maintenanceLogs.error;
+
+    if (firstError) {
+      return { data: null, error: toUserMessage(firstError) };
+    }
+
     return {
-      assets: assets.count ?? 0,
-      activeAssets: activeAssets.count ?? 0,
-      ports: ports.count ?? 0,
-      activeCables: activeCables.count ?? 0,
-      maintenanceLogs: maintenanceLogs.count ?? 0,
+      data: {
+        assets: assets.count ?? 0,
+        activeAssets: activeAssets.count ?? 0,
+        ports: ports.count ?? 0,
+        activeCables: activeCables.count ?? 0,
+        maintenanceLogs: maintenanceLogs.count ?? 0,
+      },
+      error: null,
     };
-  } catch {
-    return { assets: 0, activeAssets: 0, ports: 0, activeCables: 0, maintenanceLogs: 0 };
+  } catch (err) {
+    return { data: null, error: toUserMessage(err) };
   }
 }
 
@@ -413,7 +465,9 @@ export async function fetchAuditLogs(limit = 200): Promise<QueryResult<AuditLog>
   return fetchRows<AuditLog>(
     supabase
       .from("audit_logs")
-      .select("*, actor_profiles:profiles!audit_logs_actor_id_fkey(display_name)")
+      .select(
+        "*, actor_profiles:profiles!audit_logs_actor_id_profiles_fkey(display_name)"
+      )
       .order("created_at", { ascending: false })
       .limit(limit)
   );

@@ -19,8 +19,10 @@ import { useToast } from "@/app/contexts/ToastContext";
 import ProtectRole, { ReadOnlyNotice } from "@/app/components/ProtectRole";
 import ConfirmDialog from "@/app/components/ConfirmDialog";
 import ErrorBanner from "@/app/components/ErrorBanner";
+import Pagination from "@/app/components/Pagination";
 import { inputClass } from "@/lib/ui";
 import { formatDate, todayLocal } from "@/lib/utils";
+import { useRealtimeRefresh } from "@/lib/useRealtimeRefresh";
 
 export default function MaintenancePage() {
   const { canManage, canDelete } = usePermissions();
@@ -33,6 +35,7 @@ export default function MaintenancePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<MaintenanceJoined | null>(null);
+  const [logPage, setLogPage] = useState(1);
 
   const defaultPerformer = profile?.display_name ?? user?.email ?? "";
 
@@ -84,6 +87,16 @@ export default function MaintenancePage() {
     if (logRes.error) setError(logRes.error);
     else setLogs(logRes.data ?? []);
   }
+
+  useRealtimeRefresh(["assets", "maintenance_logs"], refreshData);
+
+  const LOGS_PER_PAGE = 25;
+  const logPageCount = Math.max(1, Math.ceil(logs.length / LOGS_PER_PAGE));
+  const safeLogPage = Math.min(logPage, logPageCount);
+  const pagedLogs = logs.slice(
+    (safeLogPage - 1) * LOGS_PER_PAGE,
+    safeLogPage * LOGS_PER_PAGE
+  );
 
   function handleChange(field: keyof typeof form, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -346,7 +359,7 @@ export default function MaintenancePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {logs.map((log) => (
+                  {pagedLogs.map((log) => (
                     <tr key={log.id} className="align-top hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
                       <td className="px-4 py-3 whitespace-nowrap text-zinc-600 sm:px-6 dark:text-zinc-400">
                         {formatDate(log.log_date)}
@@ -403,6 +416,12 @@ export default function MaintenancePage() {
               </table>
             </div>
           )}
+          <Pagination
+            page={safeLogPage}
+            pageCount={logPageCount}
+            total={logs.length}
+            onPageChange={setLogPage}
+          />
         </section>
       </main>
     </div>

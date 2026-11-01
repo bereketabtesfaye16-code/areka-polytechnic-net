@@ -25,16 +25,58 @@ export const MAINTENANCE_TYPES = [
 export const MAINTENANCE_OUTCOMES = ["pending", "completed", "failed"] as const;
 export const ROLES = ["admin", "technician", "viewer"] as const;
 
-function isValidIPv4(value: string | null | undefined): boolean {
-  if (!value) return true;
+function isValidIPv4(value: string): boolean {
   const octets = value.split(".");
   if (octets.length !== 4) return false;
   return octets.every((octet) => {
     if (!/^\d{1,3}$/.test(octet)) return false;
+    if (octet.length > 1 && octet.startsWith("0")) return false;
     const n = Number(octet);
     return n >= 0 && n <= 255;
   });
 }
+
+function isValidIPv6(value: string): boolean {
+  const address = value.split("%")[0];
+  if (!/^[0-9a-fA-F:.]+$/.test(address)) return false;
+
+  const halves = address.split("::");
+  if (halves.length > 2) return false;
+
+  const groups = halves.flatMap((half) => (half ? half.split(":") : []));
+  if (halves.length === 2 ? groups.length >= 8 : groups.length !== 8) {
+    return false;
+  }
+
+  return groups.every(
+    (group) =>
+      /^[0-9a-fA-F]{1,4}$/.test(group) ||
+      (group.includes(".") && isValidIPv4(group))
+  );
+}
+
+/** Accepts an empty value, a valid IPv4 address, or a valid IPv6 address. */
+function isValidIp(value: string | null | undefined): boolean {
+  if (!value) return true;
+  return isValidIPv4(value) || isValidIPv6(value);
+}
+
+/** True only for a real calendar date in `YYYY-MM-DD` form. */
+function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+const passwordField = z
+  .string()
+  .min(8, "Password must be at least 8 characters long")
+  .max(72, "Password cannot exceed 72 characters");
 
 /** Converts a ZodError to a single human-readable message. */
 export function zodMessage(error: z.ZodError): string {
@@ -59,8 +101,9 @@ export const assetSchema = z.object({
     .nullable()
     .optional()
     .transform((v) => v || null)
-    .refine(isValidIPv4, {
-      message: "IP address must be a valid IPv4 address (e.g. 192.168.1.1)",
+    .refine(isValidIp, {
+      message:
+        "IP address must be a valid IPv4 (e.g. 192.168.1.1) or IPv6 address",
     }),
 });
 
@@ -85,7 +128,9 @@ export const cableSchema = z.object({
 
 export const maintenanceLogSchema = z.object({
   asset_id: z.string().uuid("Select a valid asset"),
-  log_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter a valid date"),
+  log_date: z
+    .string()
+    .refine(isValidDateString, "Enter a valid calendar date (YYYY-MM-DD)"),
   maintenance_type: z.enum(MAINTENANCE_TYPES),
   title: z.string().trim().min(1, "Title is required").max(200),
   description: z.string().trim().max(2000).nullable().optional(),
@@ -106,10 +151,9 @@ export const roleSchema = z.object({
 
 export const credentialsSchema = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address"),
-  password: z
-    .string()
-    .min(6, "Password must be at least 6 characters long")
-    .max(72, "Password cannot exceed 72 characters"),
+  // Login must accept legacy accounts that predate the 8-character policy,
+  // so only presence/length bounds are enforced here.
+  password: z.string().min(1, "Password is required").max(72),
 });
 
 export const signupSchema = z
@@ -121,10 +165,7 @@ export const signupSchema = z
       .optional()
       .transform((v) => v || null),
     email: z.string().trim().toLowerCase().email("Enter a valid email address"),
-    password: z
-      .string()
-      .min(6, "Password must be at least 6 characters long")
-      .max(72, "Password cannot exceed 72 characters"),
+    password: passwordField,
     confirm: z.string().min(1, "Please confirm your password"),
   })
   .refine((v) => v.password === v.confirm, {
@@ -134,10 +175,7 @@ export const signupSchema = z
 
 export const passwordResetSchema = z
   .object({
-    password: z
-      .string()
-      .min(6, "Password must be at least 6 characters long")
-      .max(72, "Password cannot exceed 72 characters"),
+    password: passwordField,
     confirm: z.string().min(1, "Please confirm your password"),
   })
   .refine((v) => v.password === v.confirm, {

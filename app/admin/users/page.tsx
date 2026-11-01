@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   UserProfile,
   fetchProfiles,
+  updateUserApproval,
   updateUserRole,
 } from "@/lib/queries";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -53,6 +54,23 @@ export default function UsersAdminPage() {
       prev.map((p) => (p.id === profileId ? { ...p, role } : p))
     );
     success("Role updated.");
+  }
+
+  async function handleApprovalChange(profileId: string, approved: boolean) {
+    setSavingId(profileId);
+    setError(null);
+    const err = await updateUserApproval(profileId, approved);
+    setSavingId(null);
+    if (err) {
+      errorToast(err);
+      return;
+    }
+    setProfiles((prev) =>
+      prev.map((p) =>
+        p.id === profileId ? { ...p, is_approved: approved } : p
+      )
+    );
+    success(approved ? "Account approved." : "Access revoked.");
   }
 
   return (
@@ -114,6 +132,9 @@ export default function UsersAdminPage() {
                       <th className="px-4 py-3 text-left font-medium text-zinc-500 sm:px-6 dark:text-zinc-400">
                         Role
                       </th>
+                      <th className="px-4 py-3 text-left font-medium text-zinc-500 sm:px-6 dark:text-zinc-400">
+                        Access
+                      </th>
                       <th className="hidden px-4 py-3 text-left font-medium text-zinc-500 md:table-cell md:px-6 dark:text-zinc-400">
                         Created
                       </th>
@@ -139,6 +160,11 @@ export default function UsersAdminPage() {
                                 You
                               </span>
                             )}
+                            {p.email && (
+                              <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">
+                                {p.email}
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3 sm:px-6">
                             <span
@@ -146,6 +172,33 @@ export default function UsersAdminPage() {
                             >
                               {p.role}
                             </span>
+                          </td>
+                          <td className="px-4 py-3 sm:px-6">
+                            <div className="flex flex-col items-start gap-1">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                  p.is_approved || p.role === "admin"
+                                    ? "bg-green-100 text-green-800 dark:bg-green-500/10 dark:text-green-300"
+                                    : "bg-amber-100 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
+                                }`}
+                              >
+                                {p.is_approved || p.role === "admin"
+                                  ? "Approved"
+                                  : "Pending"}
+                              </span>
+                              {p.role !== "admin" && (
+                                <button
+                                  type="button"
+                                  disabled={savingId === p.id}
+                                  onClick={() =>
+                                    handleApprovalChange(p.id, !p.is_approved)
+                                  }
+                                  className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-100"
+                                >
+                                  {p.is_approved ? "Revoke" : "Approve"}
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="hidden px-4 py-3 text-zinc-600 md:table-cell md:px-6 dark:text-zinc-400">
                             {formatDateTime(p.created_at)}

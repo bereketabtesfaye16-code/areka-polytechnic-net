@@ -7,8 +7,19 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import { credentialsSchema, zodMessage } from "@/lib/validation";
 import { inputClass } from "@/lib/ui";
 
-const safeRedirect = (param: string | null) =>
-  param?.startsWith("/") && !param.startsWith("//") ? param : "/";
+function safeRedirect(param: string | null): string {
+  if (!param || typeof window === "undefined") return "/";
+  try {
+    const target = new URL(param, window.location.origin);
+    // Only same-origin, path-relative redirects are allowed. This also
+    // rejects protocol-relative and backslash tricks like `//evil.com`
+    // and `/\evil.com`.
+    if (target.origin !== window.location.origin) return "/";
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return "/";
+  }
+}
 
 function LoginForm() {
   const router = useRouter();

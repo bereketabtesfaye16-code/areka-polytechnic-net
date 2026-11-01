@@ -168,13 +168,13 @@ export default function UpdatePasswordPage() {
                 <input
                   type="password"
                   required
-                  minLength={6}
+                  minLength={8}
                   autoComplete="new-password"
                   value={form.password}
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, password: e.target.value }))
                   }
-                  placeholder="At least 6 characters"
+                  placeholder="At least 8 characters"
                   className={inputClass}
                 />
               </label>
@@ -184,7 +184,7 @@ export default function UpdatePasswordPage() {
                 <input
                   type="password"
                   required
-                  minLength={6}
+                  minLength={8}
                   autoComplete="new-password"
                   value={form.confirm}
                   onChange={(e) =>

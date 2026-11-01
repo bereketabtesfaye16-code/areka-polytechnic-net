@@ -24,8 +24,10 @@ import ProtectRole, { ReadOnlyNotice } from "@/app/components/ProtectRole";
 import ConfirmDialog from "@/app/components/ConfirmDialog";
 import Modal from "@/app/components/Modal";
 import ErrorBanner from "@/app/components/ErrorBanner";
+import Pagination from "@/app/components/Pagination";
 import { inputClass } from "@/lib/ui";
 import { formatDate } from "@/lib/utils";
+import { useRealtimeRefresh } from "@/lib/useRealtimeRefresh";
 
 const INITIAL_FORM = {
   name: "",
@@ -54,6 +56,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(INITIAL_FORM);
   const [search, setSearch] = useState("");
+  const [assetPage, setAssetPage] = useState(1);
   const [editing, setEditing] = useState<Asset | null>(null);
   const [deleting, setDeleting] = useState<Asset | null>(null);
 
@@ -65,7 +68,11 @@ export default function Home() {
         } else {
           setAssets(assetRes.data ?? []);
         }
-        setStats(statsRes);
+        if (statsRes.error) {
+          setError(statsRes.error);
+        } else {
+          setStats(statsRes.data);
+        }
         setRecentMaintenance(maintRes.data ?? []);
         setLoading(false);
       }
@@ -83,9 +90,18 @@ export default function Home() {
     } else {
       setAssets(assetRes.data ?? []);
     }
-    setStats(statsRes);
+    if (statsRes.error) {
+      setError(statsRes.error);
+    } else {
+      setStats(statsRes.data);
+    }
     setRecentMaintenance(maintRes.data ?? []);
   }
+
+  useRealtimeRefresh(
+    ["assets", "ports", "cables", "maintenance_logs"],
+    refreshData
+  );
 
   const filteredAssets = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -96,6 +112,17 @@ export default function Home() {
         .some((v) => v!.toLowerCase().includes(q))
     );
   }, [assets, search]);
+
+  const ASSETS_PER_PAGE = 25;
+  const assetPageCount = Math.max(
+    1,
+    Math.ceil(filteredAssets.length / ASSETS_PER_PAGE)
+  );
+  const safeAssetPage = Math.min(assetPage, assetPageCount);
+  const pagedAssets = filteredAssets.slice(
+    (safeAssetPage - 1) * ASSETS_PER_PAGE,
+    safeAssetPage * ASSETS_PER_PAGE
+  );
 
   function handleChange(field: keyof typeof INITIAL_FORM, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -588,7 +615,10 @@ export default function Home() {
               <input
                 type="search"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setAssetPage(1);
+                }}
                 placeholder="Search name, tag, IP..."
                 className={`${inputClass} w-full sm:w-64`}
               />
@@ -614,6 +644,7 @@ export default function Home() {
                 : "No assets registered yet. Add your first network asset above."}
             </div>
           ) : (
+            <>
             <div className="overflow-x-auto">
               <table className="min-w-[640px] divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
                 <thead className="bg-zinc-50 dark:bg-zinc-800/50">
@@ -630,7 +661,7 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {filteredAssets.map((asset) => (
+                  {pagedAssets.map((asset) => (
                     <tr key={asset.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
                       <td className="px-4 py-3 font-medium sm:px-6">{asset.name}</td>
                       <td className="px-4 py-3 font-mono text-xs text-zinc-500 sm:px-6">
@@ -679,6 +710,13 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={safeAssetPage}
+              pageCount={assetPageCount}
+              total={filteredAssets.length}
+              onPageChange={setAssetPage}
+            />
+            </>
           )}
         </section>
       </main>

@@ -23,7 +23,9 @@ import { useToast } from "@/app/contexts/ToastContext";
 import ProtectRole, { ReadOnlyNotice } from "@/app/components/ProtectRole";
 import ConfirmDialog from "@/app/components/ConfirmDialog";
 import ErrorBanner from "@/app/components/ErrorBanner";
+import Pagination from "@/app/components/Pagination";
 import { inputClass } from "@/lib/ui";
+import { useRealtimeRefresh } from "@/lib/useRealtimeRefresh";
 
 const comparePorts = (a: PortJoined, b: PortJoined) => {
   const nameDiff = a.assets.name.localeCompare(b.assets.name);
@@ -45,6 +47,7 @@ export default function ConnectionsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<CableJoined | null>(null);
+  const [cablePage, setCablePage] = useState(1);
 
   const [form, setForm] = useState({
     assetA: "",
@@ -79,6 +82,8 @@ export default function ConnectionsPage() {
     );
   }, []);
 
+  useRealtimeRefresh(["assets", "ports", "cables"], refreshData);
+
   const usedPortIds = useMemo(
     () =>
       new Set(
@@ -92,6 +97,21 @@ export default function ConnectionsPage() {
   const freePorts = useMemo(
     () => ports.filter((p) => !usedPortIds.has(p.id)),
     [ports, usedPortIds]
+  );
+
+  const sortedCables = useMemo(
+    () => [...cables].sort((a, b) => comparePorts(a.endpoint_a, b.endpoint_a)),
+    [cables]
+  );
+  const CABLES_PER_PAGE = 25;
+  const cablePageCount = Math.max(
+    1,
+    Math.ceil(sortedCables.length / CABLES_PER_PAGE)
+  );
+  const safeCablePage = Math.min(cablePage, cablePageCount);
+  const pagedCables = sortedCables.slice(
+    (safeCablePage - 1) * CABLES_PER_PAGE,
+    safeCablePage * CABLES_PER_PAGE
   );
 
   const portsOfA = useMemo(
@@ -416,9 +436,7 @@ export default function ConnectionsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {[...cables]
-                    .sort((a, b) => comparePorts(a.endpoint_a, b.endpoint_a))
-                    .map((cable) => (
+                  {pagedCables.map((cable) => (
                       <tr key={cable.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
                         <td className="px-4 py-3 font-medium sm:px-6">
                           {cable.label}
@@ -482,6 +500,12 @@ export default function ConnectionsPage() {
               </table>
             </div>
           )}
+          <Pagination
+            page={safeCablePage}
+            pageCount={cablePageCount}
+            total={sortedCables.length}
+            onPageChange={setCablePage}
+          />
         </section>
 
         <ProtectRole

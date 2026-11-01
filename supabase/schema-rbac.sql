@@ -11,8 +11,23 @@ create table if not exists public.profiles (
   role         text not null default 'viewer'
                check (role in ('admin', 'technician', 'viewer')),
   display_name text,
+  email        text,
+  -- New self-service signups start UNAPPROVED (see handle_new_user). Existing
+  -- rows and admin-created rows default to approved so deployments upgrade
+  -- without locking anyone out.
+  is_approved  boolean not null default true,
   created_at   timestamptz not null default now()
 );
+
+-- Non-destructive reconciliation for installs created before these columns.
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists is_approved boolean not null default true;
+
+-- Backfill email for existing profiles (display only; never used for auth).
+update public.profiles p
+set email = u.email
+from auth.users u
+where p.id = u.id and p.email is null;
 
 alter table public.profiles enable row level security;
 
@@ -42,6 +57,9 @@ end $$;
 -- ============================================================
 -- HELPER: user_role()
 -- Returns the caller's role from profiles, or 'viewer' if none.
+-- Unapproved accounts are downgraded to 'viewer' here so they can never
+-- satisfy an INSERT/UPDATE/DELETE policy even if an admin pre-assigned them
+-- a technician role. Admins always keep their role.
 -- ============================================================
 create or replace function public.user_role()
 returns text
@@ -51,13 +69,45 @@ stable
 set search_path = ''
 as $$
   select coalesce(
-    (select role from public.profiles where id = auth.uid()),
+    (
+      select case
+        when is_approved or role = 'admin' then role
+        else 'viewer'
+      end
+      from public.profiles
+      where id = auth.uid()
+    ),
     'viewer'
   );
 $$;
 
 -- Policies reference user_role(); make sure both app roles can invoke it.
 grant execute on function public.user_role() to anon, authenticated;
+
+-- ============================================================
+-- HELPER: is_approved()
+-- True only when the caller's profile has been approved by an admin.
+-- Self-service signups are created unapproved, so a random visitor who
+-- registers cannot read the network inventory until an admin approves them.
+-- ============================================================
+create or replace function public.is_approved()
+returns boolean
+language sql
+security definer
+stable
+set search_path = ''
+as $$
+  select coalesce(
+    (
+      select (is_approved or role = 'admin')
+      from public.profiles
+      where id = auth.uid()
+    ),
+    false
+  );
+$$;
+
+grant execute on function public.is_approved() to anon, authenticated;
 
 -- ============================================================
 -- AUTO-CREATE PROFILE ON USER SIGNUP
@@ -73,14 +123,19 @@ security definer
 set search_path = ''
 as $$
 begin
-  insert into public.profiles (id, role, display_name)
+  insert into public.profiles (id, role, display_name, email, is_approved)
   values (
     new.id,
     'viewer',
-    coalesce(
-      new.raw_user_meta_data ->> 'display_name',
-      split_part(new.email, '@', 1)
-    )
+    left(
+      coalesce(
+        new.raw_user_meta_data ->> 'display_name',
+        split_part(new.email, '@', 1)
+      ),
+      80
+    ),
+    new.email,
+    false
   );
   return new;
 end;
@@ -104,7 +159,7 @@ drop policy if exists "assets_anon_delete" on public.assets;
 drop policy if exists "assets_select" on public.assets;
 create policy "assets_select"
   on public.assets for select
-  using (auth.uid() is not null);
+  using (public.is_approved());
 
 drop policy if exists "assets_insert" on public.assets;
 create policy "assets_insert"
@@ -131,7 +186,7 @@ drop policy if exists "ports_anon_delete" on public.ports;
 drop policy if exists "ports_select" on public.ports;
 create policy "ports_select"
   on public.ports for select
-  using (auth.uid() is not null);
+  using (public.is_approved());
 
 drop policy if exists "ports_insert" on public.ports;
 create policy "ports_insert"
@@ -158,7 +213,7 @@ drop policy if exists "cables_anon_delete" on public.cables;
 drop policy if exists "cables_select" on public.cables;
 create policy "cables_select"
   on public.cables for select
-  using (auth.uid() is not null);
+  using (public.is_approved());
 
 drop policy if exists "cables_insert" on public.cables;
 create policy "cables_insert"
@@ -185,7 +240,7 @@ drop policy if exists "maintenance_anon_delete" on public.maintenance_logs;
 drop policy if exists "maintenance_select" on public.maintenance_logs;
 create policy "maintenance_select"
   on public.maintenance_logs for select
-  using (auth.uid() is not null);
+  using (public.is_approved());
 
 drop policy if exists "maintenance_insert" on public.maintenance_logs;
 create policy "maintenance_insert"
@@ -230,6 +285,50 @@ create policy "profiles_delete"
   using (public.user_role() = 'admin');
 
 -- ============================================================
+-- LAST-ADMIN GUARD
+-- Refuse to demote or delete the final administrator. Without this an admin
+-- (or a bug) could leave the system with zero admins and no in-app recovery.
+-- ============================================================
+create or replace function public.protect_last_admin()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  remaining_admins int;
+begin
+  if tg_op = 'DELETE' then
+    if old.role = 'admin' then
+      select count(*) into remaining_admins
+      from public.profiles
+      where role = 'admin' and id <> old.id;
+      if remaining_admins = 0 then
+        raise exception 'Cannot delete the last administrator.';
+      end if;
+    end if;
+    return old;
+  end if;
+
+  if old.role = 'admin' and new.role <> 'admin' then
+    select count(*) into remaining_admins
+    from public.profiles
+    where role = 'admin' and id <> old.id;
+    if remaining_admins = 0 then
+      raise exception 'Cannot demote the last administrator.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_profiles_protect_last_admin on public.profiles;
+create trigger trg_profiles_protect_last_admin
+  before update or delete on public.profiles
+  for each row execute function public.protect_last_admin();
+
+-- ============================================================
 -- GRANTS (remove anon, keep authenticated)
 -- ============================================================
 revoke all on public.assets           from anon;
@@ -261,8 +360,8 @@ grant select on public.profiles to authenticated;
 -- Users created BEFORE this migration have no profile row, which also means
 -- the auth.users trigger never fired for them. Insert a baseline 'viewer'
 -- profile for every existing user (no self-created admin):
---   insert into public.profiles (id, role, display_name)
---   select id, 'viewer', split_part(email, '@', 1)
+--   insert into public.profiles (id, role, display_name, email, is_approved)
+--   select id, 'viewer', split_part(email, '@', 1), email, true
 --   from auth.users
 --   on conflict (id) do nothing;
 -- ============================================================
@@ -278,6 +377,7 @@ grant select on public.profiles to authenticated;
 --   technician | view/add/edit (no delete)  | view/add/edit (no delete)| view/add/edit (no delete)   | view own
 --   viewer     | view only                  | view only                | view only                   | view own
 --
--- RLS: SELECT = any authenticated user; INSERT/UPDATE =
--- admin + technician; DELETE = admin only. Profiles UPDATE = admin only.
+-- RLS: SELECT = any APPROVED user; INSERT/UPDATE = admin + technician;
+-- DELETE = admin only. Profiles UPDATE = admin only. Unapproved accounts are
+-- downgraded to 'viewer' by user_role() and cannot write anything.
 -- ============================================================

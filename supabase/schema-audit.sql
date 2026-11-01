@@ -235,7 +235,8 @@ create trigger trg_cables_port_usage
 -- Backfill reservations for existing cables. If legacy data already contains
 -- duplicates we keep the earliest cable and let the app reconcile the rest.
 insert into public.cable_port_usage (port_id, cable_id)
-select port_id, min(cable_id)
+-- PostgreSQL has no min(uuid) aggregate; order by the text form instead.
+select port_id, min(cable_id::text)::uuid
 from (
   select endpoint_a_port_id as port_id, id as cable_id
   from public.cables where status <> 'decommissioned'

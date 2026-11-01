@@ -39,9 +39,6 @@ patch cables, and maintenance work at Butajira Polytechnic College. Built with
    npm run typecheck  # tsc --noEmit
    ```
 
-   CI runs lint, typecheck, and build on every push and pull request
-   (`.github/workflows/ci.yml`).
-
 ## Database Setup
 
 Apply the SQL files **in order** from the Supabase SQL Editor (or `supabase db push`):

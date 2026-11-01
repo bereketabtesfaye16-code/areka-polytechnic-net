@@ -1,5 +1,5 @@
 -- ============================================================
--- FULL RESET — Butajira Polytechnic College
+-- FULL RESET — Areka Polytechnic College
 -- WARNING: This DELETES all application data and database objects.
 -- Run this ONCE, then immediately run schema.sql, schema-rbac.sql and
 -- schema-audit.sql in that order to recreate everything.

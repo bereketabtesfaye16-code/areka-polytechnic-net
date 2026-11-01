@@ -180,14 +180,14 @@ export default function Header() {
         <Link href="/" className="flex items-center gap-2">
           <Image
             src="/company-logo.png"
-            alt="Company logo"
+            alt="Areka Polytechnic College logo"
             width={32}
             height={32}
             className="h-8 w-8 rounded object-contain"
             priority
           />
           <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
-            BPC Network Management
+            APC Network Management
           </span>
         </Link>
 

@@ -237,7 +237,7 @@ export async function fetchAssets(): Promise<QueryResult<Asset>> {
 }
 
 const defaultTag = () =>
-  `BPC-${todayLocal().replace(/-/g, "")}-${Math.floor(
+  `APC-${todayLocal().replace(/-/g, "")}-${Math.floor(
     Math.random() * 9000 + 1000
   )}`;
 

@@ -1,7 +1,7 @@
-# Butajira Polytechnic — Network Asset & Cable Infrastructure Management
+# Areka Polytechnic — Network Asset & Cable Infrastructure Management
 
 A Role-Based Access Control (RBAC) system for tracking network assets, port mappings,
-patch cables, and maintenance work at Butajira Polytechnic College. Built with
+patch cables, and maintenance work at Areka Polytechnic College. Built with
 **Next.js (App Router)**, **Supabase** (Postgres + Auth), and **Tailwind CSS**.
 
 ## Tech Stack

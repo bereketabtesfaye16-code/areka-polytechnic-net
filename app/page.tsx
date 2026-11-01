@@ -370,7 +370,7 @@ export default function Home() {
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
         <header className="mb-6 sm:mb-8">
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Butajira Polytechnic College
+            Areka Polytechnic College
           </h1>
           <p className="mt-1 text-sm text-zinc-600 sm:text-base dark:text-zinc-400">
             Network Asset & Cable Infrastructure Management Dashboard
@@ -530,7 +530,7 @@ export default function Home() {
                   type="text"
                   value={form.asset_tag}
                   onChange={(e) => handleChange("asset_tag", e.target.value)}
-                  placeholder="e.g. BPC-CS-001 (auto if blank)"
+                  placeholder="e.g. APC-CS-001 (auto if blank)"
                   className={inputClass}
                 />
               </label>

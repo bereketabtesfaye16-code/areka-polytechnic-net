@@ -20,12 +20,12 @@ const FOUC_SCRIPT = `(function(){try{var t=localStorage.getItem("bpc-theme");var
 
 export const metadata: Metadata = {
   title: {
-    default: "BPC Network Management",
-    template: "%s · BPC Network",
+    default: "APC Network Management",
+    template: "%s · APC Network",
   },
   description:
-    "Network Asset & Cable Infrastructure Management System for Butajira Polytechnic College",
-  applicationName: "BPC Network Management",
+    "Network Asset & Cable Infrastructure Management System for Areka Polytechnic College",
+  applicationName: "APC Network Management",
   icons: { icon: "/favicon.ico" },
 };
 

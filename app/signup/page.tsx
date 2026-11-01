@@ -85,7 +85,7 @@ export default function SignupPage() {
         <div className="mb-6 flex flex-col items-center text-center">
           <span className="mb-3 inline-flex h-3 w-3 rounded-full bg-green-500" />
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-            Butajira Polytechnic College
+            Areka Polytechnic College
           </h1>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             Create an account to view the campus network

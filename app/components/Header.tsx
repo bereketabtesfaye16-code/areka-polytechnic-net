@@ -179,7 +179,7 @@ export default function Header() {
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <Link href="/" className="flex items-center gap-2">
           <Image
-            src="/company-logo.png"
+            src="/company-logo.jpg"
             alt="Areka Polytechnic College logo"
             width={32}
             height={32}

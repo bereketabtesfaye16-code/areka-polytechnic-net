@@ -34,6 +34,7 @@ export default function SignupPage() {
       password: parsed.data.password,
       options: {
         data: { display_name: parsed.data.display_name },
+        emailRedirectTo: `${window.location.origin}/`,
       },
     });
     setBusy(false);
